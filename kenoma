@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCAFFOLD_DIR="/Users/brandonbell/LOCAL_DEV/kenoma-multi-agent"
+TMUX_SESSION="research-group"
+ENV_FILE="$HOME/.kenoma-multi-agent.env"
+ORCHESTRATION_KIT_DIR="/Users/brandonbell/LOCAL_DEV/orchestration-kit"
+DEFAULT_PROJECT="/Users/brandonbell/LOCAL_DEV/research-projects/opra-tail-risk"
+GUILD_ID="1484914740730790001"
+CHANNEL_ID="1484964165780111461"
+MODEL="claude-opus-4-6[1m]"
+
+ROLES=(senior-researcher engineer theorist strategist surveyor scribe pi)
+KIT_DIRS=("research-kit" "tdd-kit" "mathematics-kit" "" "research-kit" "" "")
+
+# ── Helpers ──────────────────────────────────────────────
+
+red()   { printf '\033[0;31m%s\033[0m\n' "$*"; }
+green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
+dim()   { printf '\033[0;90m%s\033[0m\n' "$*"; }
+bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
+
+die() { red "ERROR: $*" >&2; exit 1; }
+
+require_env() {
+  [ -f "$ENV_FILE" ] || die "$ENV_FILE not found"
+  source "$ENV_FILE"
+}
+
+require_session() {
+  tmux has-session -t "$TMUX_SESSION" 2>/dev/null || die "No running session. Run: kenoma up"
+}
+
+project_dir() {
+  echo "${KENOMA_PROJECT:-$DEFAULT_PROJECT}"
+}
+
+get_tokens() {
+  require_env
+  echo "$BOT_SENIOR_TOKEN" "$BOT_ENGINEER_TOKEN" "$BOT_THEORIST_TOKEN" "$BOT_STRATEGIST_TOKEN" "$BOT_SURVEYOR_TOKEN" "$BOT_SCRIBE_TOKEN" "$BOT_PI_TOKEN"
+}
+
+# ── Commands ─────────────────────────────────────────────
+
+cmd_up() {
+  require_env
+  local project="${1:-$(project_dir)}"
+  export KENOMA_PROJECT="$project"
+
+  echo "Starting research group..."
+  echo "  Project: $project"
+  echo "  Model:   $MODEL"
+
+  # Kill existing session
+  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+
+  # Ensure dirs
+  mkdir -p "${project}/shared"/{surveys,experiments,proofs,tools,specs,data,reviews,strategy}
+  mkdir -p "${project}/logs"
+  for role in "${ROLES[@]}"; do
+    mkdir -p "${project}/${role}/.claude/hooks"
+  done
+
+  # Install kits into workspaces (merges hooks into existing settings.json)
+  for i in "${!ROLES[@]}"; do
+    local role="${ROLES[$i]}"
+    local kit_dir="${KIT_DIRS[$i]}"
+    if [ -n "$kit_dir" ]; then
+      (cd "${project}/${role}" && "${ORCHESTRATION_KIT_DIR}/${kit_dir}/install.sh" > /dev/null 2>&1) || true
+    fi
+  done
+
+  # Ensure critic hook exists in non-PI settings.json (merge, don't clobber)
+  # PI is a coordinator — its messages are directives, not research claims
+  for role in "${ROLES[@]}"; do
+    [ "$role" = "pi" ] && continue
+    local settings="${project}/${role}/.claude/settings.json"
+    if [ ! -f "$settings" ]; then
+      cat > "$settings" <<'SETTINGS'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__plugin_discord_discord__reply",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/brandonbell/.local/bin/scripts/critic-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGS
+    else
+      # Merge critic hook if not already present
+      python3 -c "
+import json
+with open('$settings') as f: s = json.load(f)
+hooks = s.setdefault('hooks', {}).setdefault('PreToolUse', [])
+critic = '/Users/brandonbell/.local/bin/scripts/critic-hook.sh'
+has_critic = any(critic in str(h) for h in hooks)
+if not has_critic:
+    hooks.insert(0, {'matcher': 'mcp__plugin_discord_discord__reply', 'hooks': [{'type': 'command', 'command': critic}]})
+    with open('$settings', 'w') as f: json.dump(s, f, indent=2); f.write('\n')
+" 2>/dev/null || true
+    fi
+  done
+
+  # Also ensure PI has mention-gate hook
+  if [ ! -f "${project}/pi/.claude/hooks/mention-gate.sh" ]; then
+    cp "${SCAFFOLD_DIR}/agents/pi/hooks/mention-gate.sh" "${project}/pi/.claude/hooks/mention-gate.sh" 2>/dev/null || true
+  fi
+  # Merge mention-gate into PI settings
+  python3 -c "
+import json
+s_path = '${project}/pi/.claude/settings.json'
+with open(s_path) as f: s = json.load(f)
+hooks = s.setdefault('hooks', {}).setdefault('PreToolUse', [])
+gate_cmd = '.claude/hooks/mention-gate.sh'
+has_gate = any(gate_cmd in str(h) for h in hooks)
+if not has_gate:
+    hooks.insert(0, {'matcher': 'mcp__plugin_discord_discord__reply', 'hooks': [{'type': 'command', 'command': gate_cmd}]})
+    with open(s_path, 'w') as f: json.dump(s, f, indent=2); f.write('\n')
+" 2>/dev/null || true
+
+  # Tokens
+  local TOKENS=("$BOT_SENIOR_TOKEN" "$BOT_ENGINEER_TOKEN" "$BOT_THEORIST_TOKEN" "$BOT_STRATEGIST_TOKEN" "$BOT_SURVEYOR_TOKEN" "$BOT_SCRIBE_TOKEN" "$BOT_PI_TOKEN")
+
+  # Create tmux session — one window per agent (full-width panes for dashboard)
+  tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -n "${ROLES[0]}"
+  for i in $(seq 1 $((${#ROLES[@]} - 1))); do
+    tmux new-window -t "$TMUX_SESSION" -n "${ROLES[$i]}"
+  done
+
+  local PANE_MAP=()
+  for i in "${!ROLES[@]}"; do
+    PANE_MAP+=("${ROLES[$i]}.0")
+  done
+  local LAUNCHER_DIR="${SCAFFOLD_DIR}/.launchers"
+  mkdir -p "$LAUNCHER_DIR"
+
+  for i in "${!ROLES[@]}"; do
+    local role="${ROLES[$i]}"
+    local token="${TOKENS[$i]}"
+    local state_dir="$HOME/.claude/channels/discord-${role}"
+    local kit_dir="${KIT_DIRS[$i]}"
+    local pane="${PANE_MAP[$i]}"
+    local workspace="${project}/${role}"
+
+    local ADD_DIRS="--add-dir ${SCAFFOLD_DIR}/agents/${role}"
+    ADD_DIRS="${ADD_DIRS} --add-dir ${project}/shared"
+    [ -n "$kit_dir" ] && ADD_DIRS="${ADD_DIRS} --add-dir ${ORCHESTRATION_KIT_DIR}/${kit_dir}"
+    [ -d "${project}/reference" ] && ADD_DIRS="${ADD_DIRS} --add-dir ${project}/reference"
+
+    cat > "${LAUNCHER_DIR}/${role}.sh" <<LAUNCHER
+#!/usr/bin/env bash
+cd ${workspace}
+export DISCORD_BOT_TOKEN='${token}'
+export DISCORD_STATE_DIR='${state_dir}'
+exec claude --model '${MODEL}' --dangerously-skip-permissions ${ADD_DIRS} --channels plugin:discord@claude-plugins-official
+LAUNCHER
+    chmod +x "${LAUNCHER_DIR}/${role}.sh"
+    tmux send-keys -t "$TMUX_SESSION:${pane}" "${LAUNCHER_DIR}/${role}.sh" Enter
+  done
+
+  # Wait for agents to start, then activate remote control
+  echo "Waiting for agents to connect..."
+  sleep 10
+
+  for i in "${!ROLES[@]}"; do
+    local role="${ROLES[$i]}"
+    local pane="${PANE_MAP[$i]}"
+    tmux send-keys -t "$TMUX_SESSION:${pane}" "/rename opra-${role}" Enter
+    sleep 0.5
+    tmux send-keys -t "$TMUX_SESSION:${pane}" "/rc" Enter
+    sleep 0.5
+  done
+
+  # Post status messages via Discord API
+  local DISPLAY_NAMES=("Kenoma Senior Researcher" "Kenoma Engineer" "Kenoma Theorist" "Kenoma Critical Strategist" "Kenoma Surveyor" "Kenoma Scribe" "Kenoma PI")
+  for i in "${!ROLES[@]}"; do
+    local token="${TOKENS[$i]}"
+    local name="${DISPLAY_NAMES[$i]}"
+    curl -s -X POST \
+      -H "Authorization: Bot ${token}" \
+      -H "Content-Type: application/json" \
+      -d "{\"content\": \"**${name}** online. Ready to rumble.\"}" \
+      "https://discord.com/api/v10/channels/${CHANNEL_ID}/messages" > /dev/null
+    sleep 0.3
+  done
+
+  green "Research group is up."
+  echo ""
+  for i in "${!ROLES[@]}"; do
+    local kit="${KIT_DIRS[$i]:-"coordinator"}"
+    echo "  ${ROLES[$i]}  (${kit:-coordinator})"
+  done
+  echo ""
+  echo "  Remote control: claude.ai/code (opra-*)"
+  echo "  tmux attach -t $TMUX_SESSION"
+}
+
+cmd_down() {
+  echo "Tearing down research group..."
+  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null && green "Session killed." || dim "No session running."
+}
+
+cmd_restart() {
+  local project="${1:-$(project_dir)}"
+  cmd_down
+  sleep 1
+  cmd_purge
+  sleep 1
+  cmd_up "$project"
+}
+
+cmd_status() {
+  if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    dim "No session running."
+    return
+  fi
+
+  bold "Research Group Status"
+  echo ""
+
+  for role in "${ROLES[@]}"; do
+    local tokens=$(tmux capture-pane -t "$TMUX_SESSION:${role}.0" -p -S -50 2>/dev/null \
+      | grep -oE '[0-9,]+\s*tokens?' | tail -1 || echo "?")
+    printf "  %-22s %s\n" "$role" "${tokens:-"(no token info)"}"
+  done
+  echo ""
+}
+
+cmd_logs() {
+  local role="${1:-}"
+  local project="$(project_dir)"
+  if [ -n "$role" ]; then
+    tail -f "${project}/logs/${role}.log" 2>/dev/null || die "No log for ${role}"
+  else
+    tail -f "${project}/logs/"*.log 2>/dev/null || die "No logs found"
+  fi
+}
+
+cmd_context() {
+  require_session
+  bold "Context Window Usage"
+  echo ""
+
+  for role in "${ROLES[@]}"; do
+    local info=$(tmux capture-pane -t "$TMUX_SESSION:${role}.0" -p -S -50 2>/dev/null \
+      | grep -iE 'token|context|%' | tail -1 || echo "")
+    printf "  %-22s %s\n" "$role" "${info:-"(not visible)"}"
+  done
+  echo ""
+}
+
+cmd_purge() {
+  require_env
+  local channel="${1:-$CHANNEL_ID}"
+  echo "Purging messages from channel ${channel}..."
+
+  local deleted=0
+  while true; do
+    local messages
+    messages=$(curl -s -H "Authorization: Bot $BOT_PI_TOKEN" \
+      "https://discord.com/api/v10/channels/${channel}/messages?limit=100")
+
+    local count
+    count=$(echo "$messages" | python3 -c "
+import sys, json
+try:
+    msgs = json.loads(sys.stdin.buffer.read().decode('utf-8', errors='replace'))
+    print(len(msgs) if isinstance(msgs, list) else 0)
+except: print(0)
+" 2>/dev/null || echo "0")
+
+    [ "$count" -eq 0 ] && break
+
+    local ids
+    ids=$(echo "$messages" | python3 -c "
+import sys, json
+msgs = json.loads(sys.stdin.buffer.read().decode('utf-8', errors='replace'))
+print(json.dumps([m['id'] for m in msgs]))
+" 2>/dev/null)
+
+    if [ "$count" -gt 1 ]; then
+      curl -s -X POST \
+        -H "Authorization: Bot $BOT_PI_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"messages\": $ids}" \
+        "https://discord.com/api/v10/channels/${channel}/messages/bulk-delete" > /dev/null
+    else
+      local single_id
+      single_id=$(echo "$messages" | python3 -c "
+import sys, json
+msgs = json.loads(sys.stdin.buffer.read().decode('utf-8', errors='replace'))
+print(msgs[0]['id'])
+" 2>/dev/null)
+      curl -s -X DELETE \
+        -H "Authorization: Bot $BOT_PI_TOKEN" \
+        "https://discord.com/api/v10/channels/${channel}/messages/${single_id}" > /dev/null
+    fi
+
+    deleted=$((deleted + count))
+    printf "  deleted %d messages...\r" "$deleted"
+    sleep 1
+  done
+
+  green "Purged ${deleted} messages."
+}
+
+cmd_init() {
+  local project="${1:?Usage: kenoma init <project-dir>}"
+  project="$(cd "$(dirname "$project")" 2>/dev/null && pwd)/$(basename "$project")" || project="$1"
+
+  if [ -d "$project/shared" ]; then
+    dim "Project already exists at $project"
+    return
+  fi
+
+  echo "Initializing project: $project"
+  mkdir -p "${project}/shared"/{surveys,experiments,proofs,tools,specs,data,reviews,strategy}
+  mkdir -p "${project}/logs"
+  for role in "${ROLES[@]}"; do
+    mkdir -p "${project}/${role}"
+  done
+
+  green "Project created."
+  echo ""
+  echo "  Start with: kenoma up $project"
+}
+
+cmd_clean() {
+  local project="${1:-$(project_dir)}"
+  project="$(cd "$project" 2>/dev/null && pwd)" || die "Project dir not found: $project"
+
+  echo "Cleaning agent work products for: $project"
+
+  for role in "${ROLES[@]}"; do
+    local workspace="${project}/${role}"
+    if [ -d "$workspace" ]; then
+      cd "$workspace"
+      # Keep .claude, .lake, lakefile, lean-toolchain, lake-manifest
+      find . -maxdepth 1 ! -name '.' ! -name '.claude' ! -name '.lake' \
+        ! -name 'lean-toolchain' ! -name 'lakefile.lean' ! -name 'lake-manifest.json' \
+        -exec rm -rf {} + 2>/dev/null || true
+      echo "  ${role}: cleaned"
+    fi
+  done
+
+  # Clean shared
+  rm -rf "${project}/shared"/* 2>/dev/null || true
+  mkdir -p "${project}/shared"/{surveys,experiments,proofs,tools,specs,data,reviews,strategy}
+  rm -rf "${project}/logs"/* 2>/dev/null || true
+
+  # Reinstall kits
+  for i in "${!ROLES[@]}"; do
+    local role="${ROLES[$i]}"
+    local kit_dir="${KIT_DIRS[$i]}"
+    if [ -n "$kit_dir" ]; then
+      (cd "${project}/${role}" && "${ORCHESTRATION_KIT_DIR}/${kit_dir}/install.sh" > /dev/null 2>&1) || true
+    fi
+    # Reinit uv env
+    (cd "${project}/${role}" && uv init --name "$role" 2>/dev/null; uv venv 2>/dev/null) || true
+  done
+
+  green "Done. Kits reinstalled, uv envs created."
+}
+
+cmd_lock() {
+  local project="${1:-$(project_dir)}"
+  local ref="${project}/reference"
+  [ -d "$ref" ] || die "No reference dir at $ref"
+  local target=$(readlink "$ref" 2>/dev/null || echo "$ref")
+  chmod -R a-w "$target"/src "$target"/tests "$target"/scripts "$target"/research "$target"/paper 2>/dev/null
+  green "Reference repo locked (read-only)."
+}
+
+cmd_unlock() {
+  local project="${1:-$(project_dir)}"
+  local ref="${project}/reference"
+  [ -d "$ref" ] || die "No reference dir at $ref"
+  local target=$(readlink "$ref" 2>/dev/null || echo "$ref")
+  chmod -R u+w "$target"/src "$target"/tests "$target"/scripts "$target"/research "$target"/paper 2>/dev/null
+  green "Reference repo unlocked (writable)."
+}
+
+cmd_bounce() {
+  require_session
+  local target="${1:?Usage: kenoma bounce <agent-name>}"
+  local pane="${target}.0"
+
+  local found=false
+  for role in "${ROLES[@]}"; do
+    if [ "$role" = "$target" ]; then
+      echo "Bouncing ${target}..."
+      tmux send-keys -t "$TMUX_SESSION:${pane}" '/exit' Enter
+      sleep 4
+      tmux send-keys -t "$TMUX_SESSION:${pane}" "${SCAFFOLD_DIR}/.launchers/${target}.sh" Enter
+      sleep 8
+      tmux send-keys -t "$TMUX_SESSION:${pane}" "/rename opra-${target}" Enter
+      sleep 1
+      tmux send-keys -t "$TMUX_SESSION:${pane}" "/rc" Enter
+      green "${target} bounced."
+      found=true
+      break
+    fi
+  done
+
+  $found || die "Unknown agent: $target. Valid: ${ROLES[*]}"
+}
+
+cmd_dashboard() {
+  local dash_dir="${SCAFFOLD_DIR}/dashboard"
+  # Kill existing dashboard
+  lsof -ti:6969 2>/dev/null | xargs kill 2>/dev/null || true
+  sleep 0.5
+  cd "$dash_dir" && bun run server.ts &
+  disown
+  sleep 1
+  green "Dashboard running at http://localhost:6969"
+  open "http://localhost:6969" 2>/dev/null || true
+}
+
+cmd_help() {
+  cat <<'HELP'
+kenoma — Multi-agent research group manager
+
+Usage: kenoma <command> [args]
+
+Commands:
+  up [project-dir]     Start all agents (default: opra-tail-risk)
+  down                 Kill all agents and tmux session
+  restart [project]    Purge Discord + restart agents with fresh context
+  bounce <agent>       Restart a single agent (e.g., kenoma bounce theorist)
+  clean [project]      Nuke agent work, reinstall kits, reinit uv envs
+  init <project-dir>   Create a new project directory structure
+  lock [project]       Make reference repo read-only
+  unlock [project]     Restore write permissions on reference repo
+  status               Show running agents and token counts
+  context              Show context window usage per agent
+  logs [agent]         Tail logs (all agents or specific one)
+  purge                Delete all messages from the Discord channel
+  help                 This message
+
+Examples:
+  kenoma up                                  # start on default project
+  kenoma restart                             # purge discord + fresh start
+  kenoma bounce theorist                     # restart just the theorist
+  kenoma clean                               # nuke work, keep caches
+  kenoma status                              # quick health check
+HELP
+}
+
+# ── Dispatch ─────────────────────────────────────────────
+
+case "${1:-help}" in
+  up)       shift; cmd_up "$@" ;;
+  down)     cmd_down ;;
+  restart)  shift; cmd_restart "$@" ;;
+  bounce)   shift; cmd_bounce "$@" ;;
+  status)   cmd_status ;;
+  context)  cmd_context ;;
+  logs)     shift; cmd_logs "$@" ;;
+  init)     shift; cmd_init "$@" ;;
+  clean)    shift; cmd_clean "$@" ;;
+  lock)     shift; cmd_lock "$@" ;;
+  unlock)   shift; cmd_unlock "$@" ;;
+  purge)    shift; cmd_purge "$@" ;;
+  dashboard) cmd_dashboard ;;
+  help|-h|--help) cmd_help ;;
+  *)        die "Unknown command: $1. Run 'kenoma help' for usage." ;;
+esac

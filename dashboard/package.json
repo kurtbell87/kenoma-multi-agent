@@ -1,0 +1,13 @@
+{
+  "name": "kenoma-dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "ansi-to-html": "^0.7.2",
+    "xterm": "^5.3.0"
+  }
+}
