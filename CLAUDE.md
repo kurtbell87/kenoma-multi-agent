@@ -1,36 +1,34 @@
-# CLAUDE.md — Bootstrapper Instance
+# CLAUDE.md — Kenoma Multi-Agent Research Group
 
-You are the bootstrapper for a multi-agent Claude Code collaboration system.
+This repo is the orchestration scaffold for a 7-agent Claude Code research group. It is **substrate-agnostic** — the tooling works for any research problem. Problem-specific context belongs in the project directory, not here.
 
-## Your Job
+## Quick Start
 
-1. Read `telegram-multi-agent-spec.md` in this directory — that is the complete spec.
-2. Build the entire project structure it describes.
-3. Run the test harness to validate Telegram bot connectivity.
-4. Spawn two Claude Code instances in tmux, each with its own Telegram channel.
-5. Run the end-to-end collaboration test.
-6. Report what worked and what didn't.
-
-## Execution Order
-
+```bash
+kenoma init /path/to/my-project    # create project workspace
+kenoma up /path/to/my-project      # launch all 7 agents
+kenoma dashboard                   # open web UI at localhost:6969
 ```
-read spec → create dirs → write protocol docs → write agent CLAUDE.md files
-→ write scripts → chmod +x scripts → run test-telegram-bots.sh
-→ if bots OK: run bootstrap.sh → wait 30s → run test-collaboration.sh
-→ tail logs for 2 min → report
-```
+
+## Key Files
+
+- `kenoma` — CLI orchestrator (up, down, restart, bounce, status, dashboard, etc.)
+- `agents/<role>/CLAUDE.md` — Per-agent instructions and silence rules
+- `dashboard/` — Real-time web dashboard (Bun + vanilla JS)
+- `scripts/critic-hook.sh` — Quality gate hook for Discord messages
+- `protocol/` — Coordination protocol docs
 
 ## Important Constraints
 
-- The Channels feature is a research preview (March 2026). Things may not work as documented. If a step fails, log the error, try one workaround, and if that fails too, document what happened and move on.
-- You MUST check that `~/.kenoma-multi-agent.env` exists and has all three vars before doing anything else. If it's missing, stop immediately and tell the human what to create.
-- Do not modify anything in `~/.claude/` without checking current state first.
-- All scripts must be idempotent — safe to run multiple times.
-- The human will handle Telegram bot pairing manually. After bootstrap.sh runs, pause and prompt them to pair before running the collaboration test.
+- `~/.kenoma-multi-agent.env` must exist with all 8 bot tokens before running `kenoma up`
+- The Discord plugin patch (bot-to-bot visibility) must be applied — see README
+- All scripts must be idempotent — safe to run multiple times
+- Do not modify anything in `~/.claude/` without checking current state first
+- PI spawns last — do not change the agent order in ROLES array
 
 ## Style
 
 - Bash for scripts (no Python unless needed for JSON manipulation)
 - Minimal dependencies — curl, jq, tmux, bun, claude CLI
 - Fail fast with clear error messages
-- Log everything
+- Keep tooling general — no problem-specific hardcoding
