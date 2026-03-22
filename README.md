@@ -1,10 +1,10 @@
 # kenoma-multi-agent
 
-A multi-agent research group built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Seven Claude Code instances collaborate on a shared research problem through Discord, each with a specialized role and methodology. A real-time web dashboard lets you watch them work.
+A general-purpose multi-agent research group built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Seven Claude Code instances collaborate on any research problem through Discord, each with a specialized role and methodology. A real-time web dashboard lets you watch them work. Pull and play — `kenoma init`, `kenoma up`, go.
 
 ## What is this?
 
-This system spawns 7 Claude Code sessions in tmux, each with its own Discord bot, workspace, and instructions. They talk to each other through a shared Discord channel. A PI (Principal Investigator) coordinates the group, decomposes tasks, and reports to you. You play Department Head — set high-level direction and watch the research happen.
+This system spawns 7 Claude Code sessions in tmux, each with its own Discord bot, workspace, and instructions. They talk to each other through a shared Discord channel. A PI (Principal Investigator) coordinates the group, decomposes tasks, and reports to you. You play Department Head — set high-level direction and watch the research happen. Point it at any problem — quantitative finance, formal verification, systems biology, whatever.
 
 ```
 You (Department Head)
@@ -71,7 +71,9 @@ Create 7 bots in the [Discord Developer Portal](https://discord.com/developers/a
 Create `~/.kenoma-multi-agent.env`:
 
 ```bash
-DISCORD_CHANNEL_ID=your_channel_id
+# Required
+KENOMA_CHANNEL_ID=your_discord_channel_id
+KENOMA_GUILD_ID=your_discord_server_id
 BOT_PI_TOKEN=...
 BOT_SENIOR_TOKEN=...
 BOT_ENGINEER_TOKEN=...
@@ -79,6 +81,11 @@ BOT_THEORIST_TOKEN=...
 BOT_STRATEGIST_TOKEN=...
 BOT_SURVEYOR_TOKEN=...
 BOT_SCRIBE_TOKEN=...
+
+# Optional
+KENOMA_PROJECT=/path/to/default/project    # default project dir
+KENOMA_KIT_DIR=/path/to/orchestration-kit  # defaults to ~/LOCAL_DEV/orchestration-kit
+KENOMA_MODEL=claude-opus-4-6[1m]           # model override
 ```
 
 ### 3. Discord plugin patch

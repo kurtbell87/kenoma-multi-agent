@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCAFFOLD_DIR="/Users/brandonbell/LOCAL_DEV/kenoma-multi-agent"
+SCAFFOLD_DIR="$(cd "$(dirname "$0")" && pwd)"
 TMUX_SESSION="research-group"
 ENV_FILE="$HOME/.kenoma-multi-agent.env"
-ORCHESTRATION_KIT_DIR="/Users/brandonbell/LOCAL_DEV/orchestration-kit"
-DEFAULT_PROJECT="/Users/brandonbell/LOCAL_DEV/research-projects/opra-tail-risk"
-GUILD_ID="1484914740730790001"
-CHANNEL_ID="1484964165780111461"
-MODEL="claude-opus-4-6[1m]"
+ORCHESTRATION_KIT_DIR="${KENOMA_KIT_DIR:-$HOME/LOCAL_DEV/orchestration-kit}"
+DEFAULT_PROJECT="${KENOMA_PROJECT:-}"
+GUILD_ID="${KENOMA_GUILD_ID:-}"
+CHANNEL_ID="${KENOMA_CHANNEL_ID:-}"
+MODEL="${KENOMA_MODEL:-claude-opus-4-6[1m]}"
 
 ROLES=(senior-researcher engineer theorist strategist surveyor scribe pi)
 KIT_DIRS=("research-kit" "tdd-kit" "mathematics-kit" "" "research-kit" "" "")
@@ -32,7 +32,9 @@ require_session() {
 }
 
 project_dir() {
-  echo "${KENOMA_PROJECT:-$DEFAULT_PROJECT}"
+  local d="${KENOMA_PROJECT:-$DEFAULT_PROJECT}"
+  [ -n "$d" ] || die "No project specified. Set KENOMA_PROJECT or pass a project dir."
+  echo "$d"
 }
 
 get_tokens() {
@@ -133,6 +135,10 @@ if not has_gate:
   for i in $(seq 1 $((${#ROLES[@]} - 1))); do
     tmux new-window -t "$TMUX_SESSION" -n "${ROLES[$i]}"
   done
+
+  # Add htop window for system monitoring
+  tmux new-window -t "$TMUX_SESSION" -n "htop"
+  tmux send-keys -t "$TMUX_SESSION:htop" "htop" Enter
 
   local PANE_MAP=()
   for i in "${!ROLES[@]}"; do

@@ -15,6 +15,7 @@ const AGENTS = [
   { role: "surveyor", pane: "surveyor.0", kit: "research-kit", color: "#38bdf8" },
   { role: "scribe", pane: "scribe.0", kit: "paper", color: "#fbbf24" },
   { role: "pi", pane: "pi.0", kit: "coordinator", color: "#f43f5e" },
+  { role: "htop", pane: "htop.0", kit: "system", color: "#a6e3a1" },
 ];
 
 function capturePaneRaw(pane: string, lines = 200): Promise<string> {

@@ -367,6 +367,7 @@ const AGENTS_CONFIG = [
   { role: "surveyor", color: "#38bdf8" },
   { role: "scribe", color: "#fbbf24" },
   { role: "pi", color: "#f43f5e" },
+  { role: "htop", color: "#a6e3a1" },
 ];
 
 let agents = [];
@@ -737,9 +738,13 @@ function scaleFonts() {
   AGENTS_CONFIG.forEach(cfg => {
     const panel = document.getElementById(`panel-${cfg.role}`);
     if (!panel) return;
+    if (panel.classList.contains('maximized')) {
+      panel.style.setProperty('--term-font-size', '12px');
+      return;
+    }
     const w = panel.offsetWidth;
-    // Scale: 320px -> 10px, 800px -> 13px, fullscreen (~1400px) -> 15px
-    const size = Math.min(16, Math.max(9, 7 + w / 160));
+    // Scale: 320px -> 10px, 800px -> 13px
+    const size = Math.min(14, Math.max(9, 7 + w / 160));
     panel.style.setProperty('--term-font-size', size.toFixed(1) + 'px');
   });
 }
