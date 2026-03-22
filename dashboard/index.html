@@ -273,6 +273,34 @@
     color: var(--accent);
   }
 
+  .panel-input-overlay .echo {
+    font-size: 11px;
+    color: var(--text-bright);
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .panel-input-overlay .echo .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: var(--accent);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+    margin-left: 1px;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .panel-input-overlay .prompt-char {
+    color: var(--accent);
+    padding: 0 6px 0 8px;
+    font-size: 12px;
+  }
+
   /* Hidden input to capture keystrokes */
   .panel-key-capture {
     position: absolute;
@@ -472,7 +500,9 @@ function createPanels() {
       <div class="panel-body">
         <pre id="term-${cfg.role}"></pre>
         <div class="panel-input-overlay" onclick="startTyping('${cfg.role}')">
-          <span class="hint">click to type</span>
+          <span class="prompt-char" style="display:none">&#10095;</span>
+          <span class="echo" id="echo-${cfg.role}"></span>
+          <span class="hint" id="hint-${cfg.role}">click to type</span>
         </div>
       </div>
       <textarea class="panel-key-capture" id="keycap-${cfg.role}"></textarea>
@@ -735,16 +765,37 @@ function updatePanels() {
 
 // ── Typing mode (sends keystrokes to tmux) ──
 let typingRole = null;
+const echoBuffers = {};
 
 function startTyping(role) {
   typingRole = role;
+  echoBuffers[role] = '';
   const panel = document.getElementById(`panel-${role}`);
   const keycap = document.getElementById(`keycap-${role}`);
-  document.querySelectorAll('.panel.typing').forEach(p => p.classList.remove('typing'));
+  document.querySelectorAll('.panel.typing').forEach(p => {
+    p.classList.remove('typing');
+    // Reset other panels' echo UI
+    const r = p.dataset.role;
+    if (r && r !== role) {
+      const h = document.getElementById(`hint-${r}`);
+      const e = document.getElementById(`echo-${r}`);
+      const pr = p.querySelector('.prompt-char');
+      if (h) { h.style.display = ''; h.textContent = 'click to type'; }
+      if (e) e.innerHTML = '';
+      if (pr) pr.style.display = 'none';
+    }
+  });
   panel?.classList.add('typing');
   keycap?.focus();
 
-  // Tell server to poll this pane faster
+  // Show prompt and cursor
+  const hint = document.getElementById(`hint-${role}`);
+  const echo = document.getElementById(`echo-${role}`);
+  const prompt = panel?.querySelector('.prompt-char');
+  if (hint) hint.style.display = 'none';
+  if (prompt) prompt.style.display = '';
+  updateEcho(role);
+
   if (ws?.readyState === 1) {
     ws.send(JSON.stringify({ type: 'focus', role }));
   }
@@ -755,9 +806,25 @@ function stopTyping(role) {
   const panel = document.getElementById(`panel-${role}`);
   panel?.classList.remove('typing');
 
+  // Reset echo UI
+  const hint = document.getElementById(`hint-${role}`);
+  const echo = document.getElementById(`echo-${role}`);
+  const prompt = panel?.querySelector('.prompt-char');
+  if (hint) { hint.style.display = ''; hint.textContent = 'click to type'; }
+  if (echo) echo.innerHTML = '';
+  if (prompt) prompt.style.display = 'none';
+  echoBuffers[role] = '';
+
   if (ws?.readyState === 1) {
     ws.send(JSON.stringify({ type: 'unfocus', role }));
   }
+}
+
+function updateEcho(role) {
+  const echo = document.getElementById(`echo-${role}`);
+  if (!echo) return;
+  const text = (echoBuffers[role] || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  echo.innerHTML = text + '<span class="cursor"></span>';
 }
 
 function handleKey(e, role) {
@@ -797,11 +864,20 @@ function handleKey(e, role) {
 
   if (keyMap[key]) {
     ws.send(JSON.stringify({ type: 'key', role, key: keyMap[key] }));
+    // Update echo buffer for visual feedback
+    if (key === 'Backspace') {
+      echoBuffers[role] = (echoBuffers[role] || '').slice(0, -1);
+    } else if (key === 'Enter' || key === 'Escape') {
+      echoBuffers[role] = '';
+    }
+    updateEcho(role);
     return;
   }
 
-  // Regular printable characters — send as literal
+  // Regular printable characters — send as literal + local echo
   if (key.length === 1) {
+    echoBuffers[role] = (echoBuffers[role] || '') + key;
+    updateEcho(role);
     ws.send(JSON.stringify({ type: 'literal', role, text: key }));
     return;
   }
