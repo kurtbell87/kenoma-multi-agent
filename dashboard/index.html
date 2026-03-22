@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kenoma Research Group</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --card-bg: #181825;
+    --card-border: #313244;
+    --card-border-hover: #45475a;
+    --text: #cdd6f4;
+    --text-dim: #6c7086;
+    --text-bright: #f0f6fc;
+    --accent: #89b4fa;
+    --input-bg: #1e1e2e;
+    --scrollbar: #45475a;
+    --header-bg: #11111b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--card-border);
+    background: var(--header-bg);
+    height: 38px;
+    z-index: 1000;
+    position: relative;
+  }
+
+  .header h1 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-bright);
+    letter-spacing: 0.5px;
+  }
+
+  .header-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .header-controls button {
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    padding: 3px 10px;
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.1s;
+  }
+
+  .header-controls button:hover {
+    color: var(--text-bright);
+    border-color: var(--card-border-hover);
+  }
+
+  .status {
+    font-size: 10px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #2ea043;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Canvas ── */
+  .canvas {
+    position: relative;
+    width: 100%;
+    height: calc(100vh - 38px);
+    overflow: hidden;
+  }
+
+  /* ── Agent panel (floating window) ── */
+  .panel {
+    position: absolute;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    min-height: 180px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    transition: box-shadow 0.15s, border-color 0.15s;
+  }
+
+  .panel:hover {
+    border-color: var(--card-border-hover);
+  }
+
+  .panel.active {
+    border-color: var(--accent);
+    box-shadow: 0 4px 24px rgba(88, 166, 255, 0.1);
+    z-index: 100;
+  }
+
+  .panel.maximized {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0;
+    z-index: 200;
+  }
+
+  .panel.maximized .panel-body pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ── Panel header (drag handle) ── */
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--card-border);
+    cursor: grab;
+    flex-shrink: 0;
+    background: rgba(0,0,0,0.15);
+  }
+
+  .panel-header:active { cursor: grabbing; }
+
+  .panel-header .role-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .panel-header .indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .panel-header .meta {
+    font-size: 9px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-weight: 400;
+  }
+
+  .panel-header .meta .kit {
+    background: rgba(255,255,255,0.04);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  .panel-header .meta .tokens {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .panel-header .window-controls {
+    display: flex;
+    gap: 2px;
+  }
+
+  .panel-header .window-controls button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    line-height: 1;
+  }
+
+  .panel-header .window-controls button:hover {
+    background: rgba(255,255,255,0.08);
+    color: var(--text-bright);
+  }
+
+  /* ── Panel body (terminal output) ── */
+  .panel-body {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .panel-body pre {
+    font-family: inherit;
+    font-size: var(--term-font-size, 10px);
+    line-height: 1.4;
+    padding: 6px 8px;
+    color: var(--text);
+    white-space: pre;
+    overflow-x: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    height: 100%;
+    user-select: text;
+    transition: font-size 0.1s;
+  }
+
+  .panel-body pre::-webkit-scrollbar { width: 4px; }
+  .panel-body pre::-webkit-scrollbar-track { background: transparent; }
+  .panel-body pre::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+
+  /* ── Panel input overlay ── */
+  .panel-input-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    border-top: 1px solid var(--card-border);
+    background: rgba(0,0,0,0.3);
+    cursor: text;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .panel:hover .panel-input-overlay,
+  .panel.typing .panel-input-overlay {
+    opacity: 1;
+  }
+
+  .panel-input-overlay .hint {
+    font-size: 9px;
+    color: var(--text-dim);
+    padding: 0 8px;
+  }
+
+  .panel.typing .panel-input-overlay {
+    background: rgba(88, 166, 255, 0.08);
+    border-top-color: var(--accent);
+  }
+
+  .panel.typing .panel-input-overlay .hint {
+    color: var(--accent);
+  }
+
+  /* Hidden input to capture keystrokes */
+  .panel-key-capture {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+  }
+
+  /* ── Resize handle ── */
+  .resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    z-index: 10;
+  }
+
+  .resize-handle::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid var(--text-dim);
+    border-bottom: 2px solid var(--text-dim);
+    opacity: 0.3;
+  }
+
+  .panel:hover .resize-handle::after {
+    opacity: 0.6;
+  }
+
+  /* ANSI colors rendered inline via JS */
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>KENOMA RESEARCH GROUP</h1>
+  <div class="header-controls">
+    <button onclick="tileGrid()">Grid</button>
+    <button onclick="tileColumns()">Columns</button>
+    <button onclick="tileRows()">Rows</button>
+    <button onclick="saveLayout()">Save Layout</button>
+  </div>
+  <div class="status">
+    <span class="dot"></span>
+    <span id="status-text">connecting...</span>
+  </div>
+</div>
+
+<div class="canvas" id="canvas"></div>
+
+<script>
+const AGENTS_CONFIG = [
+  { role: "senior-researcher", color: "#60a5fa" },
+  { role: "engineer", color: "#34d399" },
+  { role: "theorist", color: "#c084fc" },
+  { role: "strategist", color: "#f97316" },
+  { role: "surveyor", color: "#38bdf8" },
+  { role: "scribe", color: "#fbbf24" },
+  { role: "pi", color: "#f43f5e" },
+];
+
+let agents = [];
+let ws = null;
+let activePanel = null;
+let zCounter = 10;
+
+// ── 256-color palette ──
+const ANSI_256 = (() => {
+  const c = [];
+  // 0-7: standard
+  c.push('#282c34','#e06c75','#98c379','#e5c07b','#61afef','#c678dd','#56b6c2','#abb2bf');
+  // 8-15: bright
+  c.push('#545862','#e06c75','#98c379','#e5c07b','#61afef','#c678dd','#56b6c2','#c8ccd4');
+  // 16-231: 6x6x6 cube
+  const v = [0,95,135,175,215,255];
+  for (let r=0;r<6;r++) for (let g=0;g<6;g++) for (let b=0;b<6;b++)
+    c.push(`rgb(${v[r]},${v[g]},${v[b]})`);
+  // 232-255: grayscale
+  for (let i=0;i<24;i++) { const g=8+i*10; c.push(`rgb(${g},${g},${g})`); }
+  return c;
+})();
+
+// ── ANSI to HTML (supports 256-color + 16-color + styles) ──
+function ansiToHtml(text) {
+  let result = '';
+  let openSpans = 0;
+  let i = 0;
+  text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  while (i < text.length) {
+    if (text[i] === '\x1b' && text[i+1] === '[') {
+      let j = i + 2;
+      let seq = '';
+      while (j < text.length && text[j] !== 'm') { seq += text[j]; j++; }
+      if (text[j] === 'm') {
+        j++;
+        const codes = seq.split(';');
+        let ci = 0;
+        while (ci < codes.length) {
+          const code = codes[ci];
+
+          if (code === '0' || code === '') {
+            while (openSpans > 0) { result += '</span>'; openSpans--; }
+          }
+          else if (code === '1') { result += '<span style="font-weight:bold">'; openSpans++; }
+          else if (code === '2') { result += '<span style="opacity:0.6">'; openSpans++; }
+          else if (code === '3') { result += '<span style="font-style:italic">'; openSpans++; }
+          else if (code === '4') { result += '<span style="text-decoration:underline">'; openSpans++; }
+          // 16 standard fg colors
+          else if (+code >= 30 && +code <= 37) {
+            result += `<span style="color:${ANSI_256[+code - 30]}">`; openSpans++;
+          }
+          else if (+code >= 90 && +code <= 97) {
+            result += `<span style="color:${ANSI_256[+code - 82]}">`; openSpans++;
+          }
+          // 16 standard bg colors
+          else if (+code >= 40 && +code <= 47) {
+            result += `<span style="background:${ANSI_256[+code - 40]}">`; openSpans++;
+          }
+          else if (+code >= 100 && +code <= 107) {
+            result += `<span style="background:${ANSI_256[+code - 92]}">`; openSpans++;
+          }
+          // 256-color fg: 38;5;N
+          else if (code === '38' && codes[ci+1] === '5') {
+            const n = +codes[ci+2] || 0;
+            result += `<span style="color:${ANSI_256[n]}">`; openSpans++;
+            ci += 2;
+          }
+          // 256-color bg: 48;5;N
+          else if (code === '48' && codes[ci+1] === '5') {
+            const n = +codes[ci+2] || 0;
+            result += `<span style="background:${ANSI_256[n]}">`; openSpans++;
+            ci += 2;
+          }
+          // 24-bit fg: 38;2;R;G;B
+          else if (code === '38' && codes[ci+1] === '2') {
+            const r=codes[ci+2]||0, g=codes[ci+3]||0, b=codes[ci+4]||0;
+            result += `<span style="color:rgb(${r},${g},${b})">`; openSpans++;
+            ci += 4;
+          }
+          // 24-bit bg: 48;2;R;G;B
+          else if (code === '48' && codes[ci+1] === '2') {
+            const r=codes[ci+2]||0, g=codes[ci+3]||0, b=codes[ci+4]||0;
+            result += `<span style="background:rgb(${r},${g},${b})">`; openSpans++;
+            ci += 4;
+          }
+          else if (code === '39') {
+            // default fg — close color span
+            if (openSpans > 0) { result += '</span>'; openSpans--; }
+          }
+          else if (code === '49') {
+            // default bg — close bg span
+            if (openSpans > 0) { result += '</span>'; openSpans--; }
+          }
+          ci++;
+        }
+        i = j;
+        continue;
+      }
+    }
+    result += text[i];
+    i++;
+  }
+  while (openSpans > 0) { result += '</span>'; openSpans--; }
+  return result;
+}
+
+// ── Panel creation ──
+function createPanels() {
+  const canvas = document.getElementById('canvas');
+  AGENTS_CONFIG.forEach((cfg, idx) => {
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.id = `panel-${cfg.role}`;
+    panel.dataset.role = cfg.role;
+    panel.innerHTML = `
+      <div class="panel-header" data-role="${cfg.role}">
+        <div class="role-info">
+          <span class="indicator" style="background:${cfg.color}"></span>
+          <span>${cfg.role}</span>
+        </div>
+        <div class="meta">
+          <span class="kit" id="kit-${cfg.role}"></span>
+          <span class="tokens" id="tokens-${cfg.role}">0 tok</span>
+        </div>
+        <div class="window-controls">
+          <button onclick="toggleMaximize('${cfg.role}')" title="Maximize">&#9633;</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <pre id="term-${cfg.role}"></pre>
+        <div class="panel-input-overlay" onclick="startTyping('${cfg.role}')">
+          <span class="hint">click to type</span>
+        </div>
+      </div>
+      <textarea class="panel-key-capture" id="keycap-${cfg.role}"></textarea>
+      <div class="resize-handle" data-role="${cfg.role}"></div>
+    `;
+    canvas.appendChild(panel);
+
+    // Focus on click
+    panel.addEventListener('mousedown', () => setActive(cfg.role));
+
+    // Click on body starts typing mode
+    panel.querySelector('.panel-body pre')?.addEventListener('click', () => startTyping(cfg.role));
+
+    // Keystroke capture
+    const keycap = panel.querySelector(`#keycap-${cfg.role}`);
+    keycap.addEventListener('keydown', (e) => handleKey(e, cfg.role));
+    keycap.addEventListener('blur', () => stopTyping(cfg.role));
+  });
+
+  // Apply saved or default layout
+  const saved = localStorage.getItem('kenoma-layout');
+  if (saved) {
+    try {
+      applyLayout(JSON.parse(saved));
+    } catch { tileGrid(); }
+  } else {
+    tileGrid();
+  }
+
+  initDragAndResize();
+}
+
+function setActive(role) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById(`panel-${role}`);
+  if (panel) {
+    panel.classList.add('active');
+    panel.style.zIndex = ++zCounter;
+    activePanel = role;
+  }
+}
+
+function toggleMaximize(role) {
+  const panel = document.getElementById(`panel-${role}`);
+  if (!panel) return;
+  panel.classList.toggle('maximized');
+  if (panel.classList.contains('maximized')) {
+    panel.style.zIndex = ++zCounter;
+  }
+  requestAnimationFrame(scaleFonts);
+}
+
+// ── Drag & Resize ──
+function initDragAndResize() {
+  let dragTarget = null;
+  let resizeTarget = null;
+  let startX, startY, startLeft, startTop, startW, startH;
+
+  document.addEventListener('mousedown', (e) => {
+    // Resize handle
+    if (e.target.classList.contains('resize-handle')) {
+      const role = e.target.dataset.role;
+      const panel = document.getElementById(`panel-${role}`);
+      if (!panel || panel.classList.contains('maximized')) return;
+      resizeTarget = panel;
+      startX = e.clientX;
+      startY = e.clientY;
+      startW = panel.offsetWidth;
+      startH = panel.offsetHeight;
+      setActive(role);
+      e.preventDefault();
+      return;
+    }
+
+    // Drag via header
+    const header = e.target.closest('.panel-header');
+    if (header) {
+      const role = header.dataset.role;
+      const panel = document.getElementById(`panel-${role}`);
+      if (!panel || panel.classList.contains('maximized')) return;
+      dragTarget = panel;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = panel.offsetLeft;
+      startTop = panel.offsetTop;
+      setActive(role);
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (dragTarget) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      dragTarget.style.left = Math.max(0, startLeft + dx) + 'px';
+      dragTarget.style.top = Math.max(0, startTop + dy) + 'px';
+    }
+    if (resizeTarget) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      resizeTarget.style.width = Math.max(320, startW + dx) + 'px';
+      resizeTarget.style.height = Math.max(180, startH + dy) + 'px';
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragTarget || resizeTarget) scaleFonts();
+    dragTarget = null;
+    resizeTarget = null;
+  });
+}
+
+// ── Layout functions ──
+function tileGrid() {
+  const canvas = document.getElementById('canvas');
+  const cw = canvas.offsetWidth;
+  const ch = canvas.offsetHeight;
+  const count = AGENTS_CONFIG.length;
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  const gap = 6;
+  const pw = Math.floor((cw - gap * (cols + 1)) / cols);
+  const ph = Math.floor((ch - gap * (rows + 1)) / rows);
+
+  AGENTS_CONFIG.forEach((cfg, idx) => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    if (!panel) return;
+    panel.classList.remove('maximized');
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    panel.style.left = (gap + col * (pw + gap)) + 'px';
+    panel.style.top = (gap + row * (ph + gap)) + 'px';
+    panel.style.width = pw + 'px';
+    panel.style.height = ph + 'px';
+  });
+}
+
+function tileColumns() {
+  const canvas = document.getElementById('canvas');
+  const cw = canvas.offsetWidth;
+  const ch = canvas.offsetHeight;
+  const count = AGENTS_CONFIG.length;
+  const gap = 4;
+  const pw = Math.floor((cw - gap * (count + 1)) / count);
+
+  AGENTS_CONFIG.forEach((cfg, idx) => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    if (!panel) return;
+    panel.classList.remove('maximized');
+    panel.style.left = (gap + idx * (pw + gap)) + 'px';
+    panel.style.top = gap + 'px';
+    panel.style.width = pw + 'px';
+    panel.style.height = (ch - gap * 2) + 'px';
+  });
+}
+
+function tileRows() {
+  const canvas = document.getElementById('canvas');
+  const cw = canvas.offsetWidth;
+  const ch = canvas.offsetHeight;
+  const count = AGENTS_CONFIG.length;
+  const gap = 4;
+  const ph = Math.floor((ch - gap * (count + 1)) / count);
+
+  AGENTS_CONFIG.forEach((cfg, idx) => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    if (!panel) return;
+    panel.classList.remove('maximized');
+    panel.style.left = gap + 'px';
+    panel.style.top = (gap + idx * (ph + gap)) + 'px';
+    panel.style.width = (cw - gap * 2) + 'px';
+    panel.style.height = ph + 'px';
+  });
+}
+
+function saveLayout() {
+  const layout = {};
+  AGENTS_CONFIG.forEach(cfg => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    if (!panel) return;
+    layout[cfg.role] = {
+      left: panel.style.left,
+      top: panel.style.top,
+      width: panel.style.width,
+      height: panel.style.height,
+    };
+  });
+  localStorage.setItem('kenoma-layout', JSON.stringify(layout));
+  // Brief flash on the save button
+  const btn = document.querySelector('.header-controls button:last-child');
+  btn.style.borderColor = '#2ea043';
+  btn.style.color = '#2ea043';
+  setTimeout(() => { btn.style.borderColor = ''; btn.style.color = ''; }, 600);
+}
+
+function applyLayout(layout) {
+  AGENTS_CONFIG.forEach(cfg => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    const pos = layout[cfg.role];
+    if (!panel || !pos) return;
+    panel.classList.remove('maximized');
+    panel.style.left = pos.left;
+    panel.style.top = pos.top;
+    panel.style.width = pos.width;
+    panel.style.height = pos.height;
+  });
+}
+
+// ── WebSocket ──
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('status-text').textContent = 'live';
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'update') {
+      agents = data.agents;
+      updatePanels();
+    }
+  };
+
+  ws.onclose = () => {
+    document.getElementById('status-text').textContent = 'reconnecting...';
+    setTimeout(connect, 2000);
+  };
+}
+
+function scaleFonts() {
+  AGENTS_CONFIG.forEach(cfg => {
+    const panel = document.getElementById(`panel-${cfg.role}`);
+    if (!panel) return;
+    const w = panel.offsetWidth;
+    // Scale: 320px -> 10px, 800px -> 13px, fullscreen (~1400px) -> 15px
+    const size = Math.min(16, Math.max(9, 7 + w / 160));
+    panel.style.setProperty('--term-font-size', size.toFixed(1) + 'px');
+  });
+}
+
+function updatePanels() {
+  for (const a of agents) {
+    const pre = document.getElementById(`term-${a.role}`);
+    const tokSpan = document.getElementById(`tokens-${a.role}`);
+    const kitSpan = document.getElementById(`kit-${a.role}`);
+
+    if (pre) {
+      const lines = a.text.split('\n');
+      const tail = lines.slice(-80).join('\n');
+      const wasAtBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+      pre.innerHTML = ansiToHtml(tail);
+      if (wasAtBottom) pre.scrollTop = pre.scrollHeight;
+    }
+    if (tokSpan) tokSpan.textContent = `${a.tokens} tok`;
+    if (kitSpan) kitSpan.textContent = a.kit;
+  }
+  scaleFonts();
+}
+
+// ── Typing mode (sends keystrokes to tmux) ──
+let typingRole = null;
+
+function startTyping(role) {
+  typingRole = role;
+  const panel = document.getElementById(`panel-${role}`);
+  const keycap = document.getElementById(`keycap-${role}`);
+  document.querySelectorAll('.panel.typing').forEach(p => p.classList.remove('typing'));
+  panel?.classList.add('typing');
+  keycap?.focus();
+
+  // Tell server to poll this pane faster
+  if (ws?.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'focus', role }));
+  }
+}
+
+function stopTyping(role) {
+  if (typingRole === role) typingRole = null;
+  const panel = document.getElementById(`panel-${role}`);
+  panel?.classList.remove('typing');
+
+  if (ws?.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'unfocus', role }));
+  }
+}
+
+function handleKey(e, role) {
+  if (!ws || ws.readyState !== 1) return;
+
+  // Map browser key events to tmux send-keys
+  const key = e.key;
+  const ctrl = e.ctrlKey;
+  const meta = e.metaKey;
+
+  // Prevent browser defaults for most keys
+  e.preventDefault();
+
+  // Ctrl combinations
+  if (ctrl) {
+    const ctrlKey = `C-${key.toLowerCase()}`;
+    ws.send(JSON.stringify({ type: 'key', role, key: ctrlKey }));
+    return;
+  }
+
+  // Special keys → tmux key names
+  const keyMap = {
+    'Enter': 'Enter',
+    'Escape': 'Escape',
+    'Backspace': 'BSpace',
+    'Delete': 'DC',
+    'Tab': 'Tab',
+    'ArrowUp': 'Up',
+    'ArrowDown': 'Down',
+    'ArrowLeft': 'Left',
+    'ArrowRight': 'Right',
+    'Home': 'Home',
+    'End': 'End',
+    'PageUp': 'PPage',
+    'PageDown': 'NPage',
+  };
+
+  if (keyMap[key]) {
+    ws.send(JSON.stringify({ type: 'key', role, key: keyMap[key] }));
+    return;
+  }
+
+  // Regular printable characters — send as literal
+  if (key.length === 1) {
+    ws.send(JSON.stringify({ type: 'literal', role, text: key }));
+    return;
+  }
+
+  // Ignore modifiers, function keys, etc.
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', (e) => {
+  // If we're in typing mode, don't handle shortcuts
+  if (typingRole) return;
+  // Escape to un-maximize
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.panel.maximized').forEach(p => p.classList.remove('maximized'));
+  }
+
+  // Number keys to focus agents (only when not typing in input)
+  if (e.target.tagName !== 'INPUT' && e.key >= '1' && e.key <= '7') {
+    const idx = parseInt(e.key) - 1;
+    if (AGENTS_CONFIG[idx]) setActive(AGENTS_CONFIG[idx].role);
+  }
+
+  // Ctrl+G = grid, Ctrl+E = columns
+  if (e.ctrlKey && e.key === 'g') { e.preventDefault(); tileGrid(); scaleFonts(); }
+  if (e.ctrlKey && e.key === 'e') { e.preventDefault(); tileColumns(); scaleFonts(); }
+});
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  // Only re-tile if no custom layout saved
+  if (!localStorage.getItem('kenoma-layout')) tileGrid();
+});
+
+// ── Init ──
+createPanels();
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Generated at runtime
+.launchers/
+logs/
+
+# Dashboard deps
+dashboard/node_modules/
+dashboard/bun.lockb
+
+# OS
+.DS_Store
+
+# Env (tokens live in ~/.kenoma-multi-agent.env, not here)
+*.env
