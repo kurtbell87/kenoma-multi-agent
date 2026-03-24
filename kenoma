@@ -264,7 +264,7 @@ cmd_context() {
 
 cmd_purge() {
   require_env
-  local channel="${1:-$CHANNEL_ID}"
+  local channel="${1:-${CHANNEL_ID:-$DISCORD_CHANNEL_ID}}"
   echo "Purging messages from channel ${channel}..."
 
   local deleted=0
