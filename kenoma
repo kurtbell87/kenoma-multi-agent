@@ -72,6 +72,11 @@ cmd_up() {
     fi
   done
 
+  # Copy scaffold CLAUDE.md into each agent workspace (authoritative — overwrites kit copies)
+  for role in "${ROLES[@]}"; do
+    cp "${SCAFFOLD_DIR}/agents/${role}/CLAUDE.md" "${project}/${role}/CLAUDE.md"
+  done
+
   # Ensure critic hook exists in non-PI settings.json (merge, don't clobber)
   # PI is a coordinator — its messages are directives, not research claims
   for role in "${ROLES[@]}"; do
@@ -115,6 +120,7 @@ if not has_critic:
     cp "${SCAFFOLD_DIR}/agents/pi/hooks/mention-gate.sh" "${project}/pi/.claude/hooks/mention-gate.sh" 2>/dev/null || true
   fi
   # Merge mention-gate into PI settings
+  [ -f "${project}/pi/.claude/settings.json" ] || printf '{}\n' > "${project}/pi/.claude/settings.json"
   python3 -c "
 import json
 s_path = '${project}/pi/.claude/settings.json'
